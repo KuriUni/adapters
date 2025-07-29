@@ -88,6 +88,7 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
                         '{"1": 16, "default": 16}'
                     )
 
+            # check unsupported configurations for layer hooking mode
             if self.is_layer_hooked:
                 for key, value in LAYER_HOOK_UNSUPPORTED:
                     if adapter_config.get(key, None) == value:
@@ -106,9 +107,11 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
                 down_sample=int(self.model_config.hidden_size // reduction_factor),
                 config=adapter_config,
             )
+            # for adapters hooked via interface:
+            # residual & LN are applied by model, so don't apply in adapters
             if self.is_layer_hooked:
                 adapter.original_ln_after = False
-            adapter.train(self.training)
+            adapter.train(self.training)  # make sure training mode is consistent
             self.adapters[adapter_name] = adapter
             return True
 
@@ -140,12 +143,12 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
         unfreeze_fusion: bool,
     ):
         """
-        Thaw the given list of adapters, adapter fusion layers, or both.
+        Unfreezes a given list of adapters, the adapter fusion layer, or both
 
         Args:
-            adapter_names: Names of adapters to thaw (or names of adapters in the fusion layer to thaw).
-            unfreeze_adapters: Whether to activate the adapter weights.
-            unfreeze_fusion: Whether to activate the fusion layer of the given adapters.
+            adapter_names: names of adapters to unfreeze (or names of adapters part of the fusion layer to unfreeze)
+            unfreeze_adapters: whether the adapter weights should be activated
+            unfreeze_fusion: whether the adapter fusion layer for the given adapters should be activated
         """
         if unfreeze_adapters:
             for adapter_name in adapter_setup.flatten():
@@ -254,6 +257,7 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
         """
         context = ForwardContext.get_context()
 
+        # config of _last_ fused adapter is significant
         fusion_config, _ = self.adapters_config.get_fusion(adapter_setup.name)
         last = adapter_setup.last()
         last_adapter = self.adapters[last]
@@ -343,7 +347,7 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
 
     def bottleneck_layer_forward(self, hidden_states, residual_input, layer_norm):
         """Forward pass through the adapter layer.
-        Note: This method should only be called when the calling module inherits directly from BottleneckLayer.
+        NOTE: This method should only be called if the calling module directly inherits from BottleneckLayer.
         Otherwise, call the regular forward() method.
 
         Args:
@@ -354,8 +358,10 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
         Returns:
             torch.Tensor: Output hidden states of the adapter layer.
         """
+        # Batch sizes might be different due to prefix tuning w. Parallel block
         if residual_input is not None:
             (residual_input,) = adjust_tensors_for_parallel(hidden_states, residual_input)
+            # Replicate in both directions as residual might be larger (e.g. GPT-J)
             (hidden_states,) = adjust_tensors_for_parallel(residual_input, hidden_states)
         adapter_setup = self.get_active_setup()
         if adapter_setup is not None:
@@ -367,6 +373,7 @@ class BottleneckLayer(ComposableAdapterLayerBase, nn.Module):
 
             last_adapter = self.adapters[last]
             hidden_states = last_adapter.post_forward(hidden_states, input_hidden_states, residual_input, layer_norm)
+
         elif layer_norm is not None and not self.is_layer_hooked:
             hidden_states = layer_norm(hidden_states + residual_input)
         elif residual_input is not None and not self.is_layer_hooked:
