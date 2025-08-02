@@ -420,6 +420,7 @@ def hook_fn(i, adapter_name, ln_name, module, args, output):
     else:
         return (adapter_layer(output[0], residual_input, layer_norm),) + output[1:]
 
+
 def _attention_adapters_hook_forward_pre_hook(module, args):
     """
     Pre-forward hook to set the multi-head attention adapters in the context.
@@ -431,6 +432,7 @@ def _attention_adapters_hook_forward_pre_hook(module, args):
     context = ForwardContext.get_context()
     if context is not None:
         setattr(context, "mh_adapter", module.attention_adapters)
+
 
 def _output_adapter_hook_forward_pre_hook(module, args):
     """
@@ -444,6 +446,7 @@ def _output_adapter_hook_forward_pre_hook(module, args):
     if context is not None:
         setattr(context, "output_adapter", module.output_adapters)
 
+
 def _cross_attention_adapters_hook_forward_pre_hook(module, args):
     """
     Pre-forward hook to set the cross-attention adapters in the context.
@@ -455,6 +458,7 @@ def _cross_attention_adapters_hook_forward_pre_hook(module, args):
     context = ForwardContext.get_context()
     if context is not None:
         setattr(context, "crossattn_adapter", module.cross_attention_adapters)
+
 
 def _layer_hook_forward_pre_hook(module, args):
     """
@@ -468,6 +472,7 @@ def _layer_hook_forward_pre_hook(module, args):
     if context is not None:
         setattr(context, "layer", module)
 
+
 def _residual_hook_fn(location_key, module, args):
     """
     Hook function to set the residual input in the context.
@@ -480,6 +485,7 @@ def _residual_hook_fn(location_key, module, args):
     context = ForwardContext.get_context()
     if context is not None:
         setattr(context, f"{location_key}_residual_input", args[0])
+
 
 def init_bottleneck(model):
     """
@@ -508,7 +514,9 @@ def init_bottleneck(model):
                 if not hasattr(layer, "has_output_adapters_hook_forward_pre_hook"):
                     layer.register_forward_pre_hook(_output_adapter_hook_forward_pre_hook)
                     layer.has_output_adapters_hook_forward_pre_hook = True
-                layer_output_proj.register_forward_hook(partial(hook_fn, i, "output_adapter", model.adapter_interface.layer_ln_2))
+                layer_output_proj.register_forward_hook(
+                    partial(hook_fn, i, "output_adapter", model.adapter_interface.layer_ln_2)
+                )
         if cross_attn := multigetattr(layer, model.adapter_interface.layer_cross_attn, None):
             if not hasattr(cross_attn, "cross_attention_adapters"):
                 layer.cross_attention_adapters = BottleneckLayer("cross_adapter", is_layer_hooked=True)
